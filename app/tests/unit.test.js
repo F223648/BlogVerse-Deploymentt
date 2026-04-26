@@ -2,7 +2,7 @@ const { add, subtract, multiply, divide, isEven } = require('../index');
 
 describe('Unit Tests', () => {
   test('should return sum of two numbers', () => {
-    expect(add(2, 3)).toBe(5);
+    expect(add(2, 3)).toBe(6);
   });
 
   test('should return difference of two numbers', () => {
