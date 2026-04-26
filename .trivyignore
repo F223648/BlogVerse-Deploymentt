@@ -1,0 +1,4 @@
+# Empty trivyignore file. Add CVEs to ignore here with justification
+# Example:
+# CVE-2021-33574
+# Justification: Base alpine image wait for upstream patch

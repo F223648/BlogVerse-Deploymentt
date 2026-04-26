@@ -1,0 +1,34 @@
+pipeline {
+    agent { label 'linux-agent' }
+
+    environment {
+        AWS_DEFAULT_REGION = "us-east-1"
+    }
+
+    stages {
+        stage('Rollback') {
+            steps {
+                script {
+                    def ALB_ARN = sh(script: "aws elbv2 describe-load-balancers --names assignment3-alb --query 'LoadBalancers[0].LoadBalancerArn' --output text", returnStdout: true).trim()
+                    def LISTENER_80_ARN = sh(script: "aws elbv2 describe-listeners --load-balancer-arn ${ALB_ARN} --query 'Listeners[?Port==\\`80\\`].ListenerArn' --output text", returnStdout: true).trim()
+                    def LISTENER_8080_ARN = sh(script: "aws elbv2 describe-listeners --load-balancer-arn ${ALB_ARN} --query 'Listeners[?Port==\\`8080\\`].ListenerArn' --output text", returnStdout: true).trim()
+
+                    def currentTgArn = sh(script: "aws elbv2 describe-listeners --listener-arns ${LISTENER_80_ARN} --query 'Listeners[0].DefaultActions[0].TargetGroupArn' --output text", returnStdout: true).trim()
+                    
+                    def newTgColor = currentTgArn.contains("tg-blue") ? "green" : "blue"
+                    echo "Currently traffic is on ${currentTgArn}. Rolling back to ${newTgColor}."
+                    
+                    def newTgArn = sh(script: "aws elbv2 describe-target-groups --names assignment3-tg-${newTgColor} --query 'TargetGroups[0].TargetGroupArn' --output text", returnStdout: true).trim()
+                    
+                    // Swap main listener
+                    sh "aws elbv2 modify-listener --listener-arn ${LISTENER_80_ARN} --default-actions Type=forward,TargetGroupArn=${newTgArn}"
+                    
+                    // Swap test listener
+                    sh "aws elbv2 modify-listener --listener-arn ${LISTENER_8080_ARN} --default-actions Type=forward,TargetGroupArn=${currentTgArn}"
+
+                    echo "Rollback complete. Traffic is now on ${newTgColor}."
+                }
+            }
+        }
+    }
+}

@@ -1,0 +1,88 @@
+pipeline {
+    agent { label 'linux-agent' }
+
+    parameters {
+        choice(name: 'ACTION', choices: ['plan', 'apply', 'destroy'], description: 'Terraform action to perform')
+        booleanParam(name: 'AUTO_APPROVE', defaultValue: false, description: 'Automatically approve apply/destroy without manual intervention')
+    }
+
+    environment {
+        AWS_CREDENTIALS = credentials('aws-credentials')
+        // Automatically inject AWS credentials assuming the Jenkins credential is of type AWS credentials
+        AWS_ACCESS_KEY_ID = "${AWS_CREDENTIALS_USR}"
+        AWS_SECRET_ACCESS_KEY = "${AWS_CREDENTIALS_PSW}"
+        AWS_DEFAULT_REGION = "us-east-1"
+    }
+
+    stages {
+        stage('Checkout') {
+            steps {
+                checkout scm
+            }
+        }
+
+        stage('Fmt & Validate') {
+            steps {
+                sh 'terraform fmt -check -recursive'
+                sh 'terraform init -backend=false'
+                sh 'terraform validate'
+            }
+        }
+
+        stage('Security Scan (tfsec)') {
+            steps {
+                // Install tfsec locally if not exists
+                sh '''
+                if ! command -v tfsec &> /dev/null; then
+                    curl -s https://raw.githubusercontent.com/aquasecurity/tfsec/master/scripts/install_linux.sh | bash
+                fi
+                '''
+                sh 'tfsec . --minimum-severity HIGH --format table --out tfsec-report.txt'
+            }
+            post {
+                always {
+                    archiveArtifacts artifacts: 'tfsec-report.txt', allowEmptyArchive: true
+                }
+            }
+        }
+
+        stage('Plan') {
+            steps {
+                sh 'terraform init'
+                script {
+                    if (params.ACTION == 'destroy') {
+                        sh 'terraform plan -destroy -out=tfplan'
+                    } else {
+                        sh 'terraform plan -out=tfplan'
+                    }
+                }
+                archiveArtifacts artifacts: 'tfplan'
+            }
+        }
+
+        stage('Manual Approval') {
+            when {
+                expression {
+                    (params.ACTION == 'apply' || params.ACTION == 'destroy') && !params.AUTO_APPROVE
+                }
+            }
+            steps {
+                timeout(time: 30, unit: 'MINUTES') {
+                    input message: "Approve Terraform ${params.ACTION}?", ok: "Approve"
+                }
+            }
+        }
+
+        stage('Apply/Destroy') {
+            when {
+                expression {
+                    params.ACTION == 'apply' || params.ACTION == 'destroy'
+                }
+            }
+            steps {
+                // Apply using the exact plan outputted exactly previously
+                sh 'terraform apply tfplan'
+            }
+        }
+    }
+}

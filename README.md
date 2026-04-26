@@ -1,79 +1,70 @@
-# BlogVerse - Containerization and Deployment
+# Assignment 4: CI/CD Pipeline on AWS
 
-## Project Overview
-BlogVerse is a full-stack blogging platform where users can register, log in, create blog posts, and add comments. This project demonstrates the containerization and orchestration of the application using Docker and Kubernetes, fulfilling the requirements for Assignment 2.
+This repository models a fully functional CI/CD pipeline built around Jenkins, SonarQube, Terraform, Docker, and AWS.
 
-BlogVerse Repo : https://github.com/meerabawais/BlogVerse
+## Directory Structure
+- `app/`: Sample Node.js application containing the web app, tests, and Dockerfile.
+- `jenkins/`: Terraform module for provisioning the Jenkins Controller & Agent instances. Includes `setup.md`.
+- `pipelines/`: Secondary Jenkinsfiles (`infra-pipeline.jenkinsfile`, `rollback.jenkinsfile`).
+- `modules/`: Underlying VPC, Compute, and Security Terraform modules.
+- `Jenkinsfile`: The main declarative pipeline managing application stages (Build, Test, Scan, Push, Deploy).
 
-## Tools and Technologies Used
-* **Frontend:** React.js, JavaScript, CSS
-* **Backend:** Node.js, Express.js
-* **Database:** MongoDB
-* **Containerization:** Docker, Docker Compose
-* **Orchestration:** Kubernetes (Local via Docker Desktop)
+*Note: The groovy shared library resides in its own repository according to the spec: `jenkins-shared-library`.*
 
-## Application Architecture
-The application follows a standard 3-tier MERN stack architecture:
-1. **Frontend (blogverse):** A React application serving the user interface, running on port 3000.
-2. **Backend (backend):** A Node.js/Express REST API handling routing, business logic, and database connections, running on port 5000.
-3. **Database (mongo):** A MongoDB database storing collections for users, posts, and comments.
+## Prerequisites
+- AWS Account configured locally (Administrator permissions).
+- GitHub Personal Access Token (for Jenkins to clone repos).
+- (Optional) Slack webhook for receiving build notifications.
 
-## Docker Build and Run Instructions
-To build and run the individual containers locally, use the following commands from the root directory:
-
-**1. Build the images:**
+## 1. Initial Infrastructure Bring-Up
+First, deploy everything by running Terraform from the root repository:
 ```bash
-docker build -t blogverse-backend:latest ./backend
-docker build -t blogverse-frontend:latest ./blogverse
+terraform init
+terraform plan
+terraform apply --auto-approve
+```
+This deploys:
+- Networking stack (VPC, Subnets)
+- Jenkins Controller (Public Subnet) & Jenkins Agent (Private Subnet)
+- SonarQube Server
+- ECR Repository
+- Blue/Green ASG & ALB Infrastructure
 
-**2. Run the containers manually:**
-docker run -d -p 5000:5000 --name backend-container blogverse-backend
-docker run -d -p 3000:3000 --name frontend-container blogverse-frontend
+## 2. Setting Up Jenkins & SonarQube
+1. Access Jenkins UI via the IP output from Terraform: `terraform output jenkins_controller_url`.
+2. Grab the admin initial password from the controller by following `jenkins/setup.md`.
+3. Configure the `linux-agent`, AWS/GitHub Credentials, and the SonarQube token.
+4. Add the *Global Pipeline Library* (`jenkins-shared-library`) pointing to your actual GitHub URL.
+   
+For SonarQube: Access it on Port 9000 using `admin/admin`, force a password reset, and generate a Global Analysis Token.
 
-**3. To run the entire multi-container application (Frontend, Backend, and Database) at once with automated network configuration and environment variables, use Docker Compose:**
+## 3. Running the Pipelines
+Create the following pipeline jobs in Jenkins:
 
-# Start all services in the background
-docker-compose up --build -d
+### The Application Pipeline (Multibranch)
+- **Type**: Multibranch Pipeline
+- **Source**: Your assignment GitHub repository containing `Jenkinsfile`.
+- **Behavior**: Will automatically trigger the CI/CD pipeline out to the Blue-Green staging deployment using AWS ECR and Launch Template updates.
 
-# To stop and remove the containers
-docker-compose down
+### The Infra Pipeline (Standard Pipeline)
+- **Type**: Pipeline Job (Parameterized)
+- **Configuration Path**: `pipelines/infra-pipeline.jenkinsfile`.
+- **Parameters**: ACTION (plan, apply, destroy), AUTO_APPROVE.
+- **Behavior**: Facilitates automated Terraform syntax lint checks, `tfsec` scanning, and execution.
 
-Kubernetes Deployment Steps
-The application is orchestrated using local Kubernetes. The deployment manifests are located in the k8s/ directory.
+### The Rollback Pipeline (Standard Pipeline)
+- **Type**: Pipeline Job
+- **Configuration Path**: `pipelines/rollback.jenkinsfile`.
+- **Behavior**: If a deployment slips past testing onto the Live target group, this manually kicks the ALB listener back to the prior color target group.
 
-1. Build the local images for Kubernetes:
+## 4. Teardown
+To cleanly destroy all AWS resources created:
+```bash
+terraform destroy
+```
 
-docker build -t blogverse-backend:latest ./backend
-docker build -t blogverse-frontend:latest ./blogverse
-2. Apply the Kubernetes manifests:
-
-# 1. Setup Persistent Volume and Claim for MongoDB
-kubectl apply -f k8s/mongo-pv-pvc.yaml
-
-# 2. Deploy MongoDB and its Service
-kubectl apply -f k8s/mongo-deployment.yaml
-
-# 3. Deploy the Backend (3 Replicas) and Service
-kubectl apply -f k8s/backend-deployment.yaml
-
-# 4. Deploy the Frontend (3 Replicas) and Service
-kubectl apply -f k8s/frontend-deployment.yaml
-
-# 5. Apply Horizontal Pod Autoscalers
-kubectl apply -f k8s/hpa.yaml
-3. Verify the deployment:
-
-kubectl get pods
-kubectl get svc
-Scaling Configuration
-Horizontal Pod Autoscaling (HPA) is implemented for both the frontend and backend deployments to handle variable traffic loads automatically.
-
-HPA Parameters:
-
-Minimum Pods: 2
-
-Maximum Pods: 5
-
-CPU Utilization Target: 70%
-
-When average CPU utilization across the pods exceeds 70%, Kubernetes will automatically spin up additional replicas (up to a maximum of 5) to handle the load.
+## Contribution Table
+| Name | Roll Number | Contribution |
+|------|-------------|--------------|
+| Student A | 1234 | Jenkins Setup, Pipeline |
+| Student B | 5678 | Terraform Blue-Green |
